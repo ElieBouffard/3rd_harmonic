@@ -38,7 +38,6 @@ f_real = 1./real_period                            #Real signal's frequency
 transit_depth = 1.e-3
 transit_len = real_period/10.
 A_real = transit_depth                              #Real signal's amplitude
-
 N_freq = 1./(2.**(0.5)*10.)                                     #Noise frequency
 A_noise = 1.e-2                                    #Noise amplitude
 Noise = 1.0 + A_noise*np.sin(N_freq * 2.0*np.pi*t)  #Noise
@@ -55,46 +54,40 @@ N_ran = np.asarray(N_ran)
 signal = F_real+Noise + N_ran
 
 print N
-#-----------------------------------------------------------------------------
-#This function is useful for finding the closest value in an array.
-#Inputs: an array and the value you want to find
-#Output: The closest value of the wanted value in the given array
-def find_nearest(array,value):
-    idx = (np.abs(array-value)).argmin()
-    return array[idx]
+
 #-----------------------------------------------------------------------------
 
 #**************Transits and eclipses parameters***********************
 #The function is only used if we phase-fold. 
-if Method == 1 or Method == 2:
+def transit(new_t): 
 	indexes = []
+	one_period_N = len(new_t)
 	t0 =  real_period*np.random.rand()/2.				#The beginning of the transit. Must be in the first half of the planet's period
-	one_period_N = int((N - N % period_number)/period_number)       #The number of points in a single planet period. Points may be removed in order to have an equal division.
-	new_t = np.linspace(0.,real_period, one_period_N)               #The time array of a planet period
-	transit_pts = int(transit_len/(real_period/one_period_N))       #The number of points in a planet period
-	nearest_value = find_nearest(new_t, t0)                         #The nearest value of t0 in the time array
-	indexi = np.where(new_t == nearest_value)[0][0]                 #The index of that value
-	half_period_pts = int(one_period_N/2.)                          #Number of points in half a planet period
+	index_it0 = (np.abs(new_t-t0)).argmin()                 
+	index_transit_end = (np.abs(new_t- t0 - transit_len)).argmin()
+	index_half_period_later = (np.abs(new_t- t0 - real_period/2.)).argmin()
+	half_period_pts = index_half_period_later - index_it0 
+	transit_pts = index_transit_end - index_it0
 	for i in range(2):                                              #We create a list of the indexes of the time falling the transit and the eclipse
-		indexes = indexes + (np.asarray(range(transit_pts))+ indexi + i*half_period_pts).tolist()
+		indexes = indexes + (np.asarray(range(transit_pts))+ index_it0 + i*half_period_pts).tolist()
 	to_mask_transit = np.zeros(one_period_N)                        #used in order to mask the data points in the transit and eclipse
-	indexes = np.asarray(indexes)	
-	to_mask_transit[indexes[indexes < one_period_N]] = 1                   #We don't consider to points outside the range         
+	indexes = np.asarray(indexes)		
+	to_mask_transit[indexes[indexes < one_period_N]] = 1                  #We don't consider to points outside the range     
+	return to_mask_transit      
 #------------------------------------------------------------------------------
 
 if hole_index == 1:
 	#We remove parts of the signal to simulate real data                 #size of each hole
 	hole_number = int(period_number*np.random.rand()/2.)                 #random hole number
 	hole_size = np.random.rand(hole_number)                              #random size for each hole
-	hole_pos = N*delta_t*np.random.rand(hole_number)                     #random position for each hole
+	hole_pos = T_tot*np.random.rand(hole_number)                     #random position for each hole
 	num_pts = hole_size/delta_t                                          #number of points in each hole
 	num_pts = num_pts.astype(int)                                        #this number is an integer
 	to_mask = np.zeros(N)                                                #mask initialization
 	temp =[]
 	#Create a list of all the indexes to be masked
 	for i in range(hole_number):
-		nearest_value = find_nearest(t, hole_pos[i])                 #find the nearest value of the hole position
-		indexi = np.where(t == nearest_value)[0][0]                  #find its index
+		indexi = (np.abs(t-hole_pos[i])).argmin()                  #find its index
 		temp = temp + (np.asarray(range(num_pts[i]))+indexi).tolist()#add the indexes of all the points in the hole in a list
 	to_mask[temp] = 1                                                    #all the hole points are to be masked
 if hole_index != 0 and hole_index != 1:                                      #failsafe
@@ -146,55 +139,37 @@ elif Method == 1:     #If Method is 1, we phase fold.
 		signal=np.ma.array(signal,mask=to_mask)
 		F_real=np.ma.array(F_real,mask=to_mask) 
 		Noise=np.ma.array(Noise,mask=to_mask)
-		N_ran=np.ma.array(N_ran,mask=to_mask)	
+		N_ran=np.ma.array(N_ran,mask=to_mask)
 	
-	remove = N % period_number	
-	#We split the signal in equal parts the lenght of the real signal's period
-	#We discard the last period elements, in case of eneven array division	
-	if remove == 0:
-		new_signal =np.array_split(signal,period_number)                        
-	else:
-		new_signal =np.array_split(signal[:-remove],period_number)	
-	new_signal_avrg = []	
-	
-	#The number of points in a single period
-	new_N = int((N-remove)/period_number)	
-	
-	#Because of phase-folding, there are many points along the same x. So, the average is computed.
-	if hole_index == 0:
-		new_signal_avrg = np.mean(new_signal, axis = 0)
-	elif hole_index == 1:
-		new_signal_avrg = np.ma.mean(new_signal, axis = 0)
-	#Since only one period is considered, we only need the time of one period.                            
-	new_t = np.linspace(0.,1./f_real,len(new_signal_avrg))	
+	t = np.ma.mod(t,real_period)
+	data = np.ma.column_stack((t,signal))
+	data = data[np.lexsort((data[:,1],data[:,0]))]	
+	to_mask_transit = transit(data[:,0])
 	
 	#We choose the frequency range we want to check. An angular frequency is required
 	#for the L-S diagram.
-	fmin=0.1*f_real
-	fmax=10.*f_real
-	Nf=N
-	df = (fmax - fmin) / Nf	
-	f = 2.0*np.pi*np.linspace(fmin, fmax, Nf)
+	fmin_pf=0.1*f_real
+	fmax_pf=10.*f_real
+	Nf_pf=N
+	df_pf = (fmax_pf - fmin_pf) / Nf_pf	
+	f_pf = 2.0*np.pi*np.linspace(fmin_pf, fmax_pf, Nf_pf)
 	
 	#We take the L-S of the signal
 	if hole_index == 1:
-		mask_tot = new_signal_avrg.mask + to_mask_transit
+		mask_tot = data[:,0].mask + to_mask_transit
 		mask_tot[mask_tot == 2] = 1	
-		new_signal_avrg=np.ma.array(new_signal_avrg,mask=mask_tot)
-		pgram_pf = LombScargleFast().fit(new_t[~new_signal_avrg.mask], new_signal_avrg[~new_signal_avrg.mask],sdev)		
+		data[:,0] = np.ma.array(data[:,0], mask = mask_tot)
+		pgram_pf = LombScargleFast().fit(data[:,0][~data[:,0].mask], data[:,1][~data[:,0].mask],sdev)		
 	elif hole_index == 0:
-		new_signal_avrg=np.ma.array(new_signal_avrg,mask=to_mask_transit)
-		pgram_pf = LombScargleFast().fit(new_t[~new_signal_avrg.mask], new_signal_avrg[~new_signal_avrg.mask],sdev)	
-	
-	power_pf = pgram_pf.score_frequency_grid(fmin,df,Nf)		
+		data = np.ma.array(data, mask = to_mask_transit)
+		pgram_pf = LombScargleFast().fit(data[:,0][~data[:,0].mask], data[:,1][~data[:,0].mask],sdev)	
+	power_pf = pgram_pf.score_frequency_grid(fmin_pf,df_pf,Nf_pf)			
 	
 	#We plot the relevant graphs
 	fig, ax = plt.subplots(2, 1)
 	ax[0].set_xlim([0,1./f_real])
-	ax[0].plot(new_t,new_signal_avrg)
-	for i in range(len(new_signal)):
-		ax[0].plot(new_t,new_signal[i],'o', ms = 1)                      
-	ax[0].set_xlabel('Time (days)')
+	ax[0].plot(data[:,0],data[:,1])                    
+	ax[0].set_xlabel('Time')
 	ax[0].set_ylabel('Flux')
 	ax[0].grid()
 	ax[1].set_xlim([0.5,6])
@@ -203,7 +178,6 @@ elif Method == 1:     #If Method is 1, we phase fold.
 	ax[1].plot(f/2.0/np.pi/f_real, power_pf, 'o')
 	ax[1].set_xlabel('Freq (1/orbital period)')
 	ax[1].set_ylabel('L-S power')
-	ax[1].set_xlim([fmin/2.0/np.pi/f_real,6])
 	ax[1].grid()
 	plt.show()
 
@@ -221,7 +195,7 @@ elif Method == 2:  #If Method is 2, we do both.
 	#for the L-S diagram.	
 	fmin=0.1*f_real
 	fmax=10.*f_real
-	Nf=N
+	Nf=20000
 	df = (fmax - fmin) / Nf	
 	f = 2.0*np.pi*np.linspace(fmin, fmax, Nf)
 	
@@ -276,55 +250,50 @@ elif Method == 2:  #If Method is 2, we do both.
 	ax5.grid()	
 	ax5.get_yaxis().get_major_formatter().set_useOffset(False)
 
-	#****Phase-folding part****
-	remove = N % period_number	
-	#We split the signal in equal parts the lenght of the real signal's period	
-	if remove == 0:
-		new_signal =np.array_split(signal,period_number)                     
-	else:
-		new_signal =np.array_split(signal[:-remove],period_number)	
-	new_signal_avrg = []	
-	
-	
-	#The number of points in a single period
-	new_N = int((N-remove)/period_number)	
-	
-	#Because of phase-folding, there are many points along the same x. So, the average is computed.
-	if hole_index == 1:
-		new_signal_avrg = np.ma.mean(new_signal, axis = 0)
-	elif hole_index == 0:
-		new_signal_avrg = np.mean(new_signal, axis = 0)
-	new_t = np.linspace(0.,1./f_real,len(new_signal_avrg))
+	#***************************Phase-folding part**************************
+	t = np.ma.mod(t,real_period)
+	data = np.ma.column_stack((t,signal))
+	data = data[np.lexsort((data[:,1],data[:,0]))]	
+	to_mask_transit = transit(data[:,0])
 	#We choose the frequency range we want to check. An angular frequency is required
 	#for the L-S diagram.
 	fmin_pf=0.1*f_real
 	fmax_pf=10.*f_real
-	Nf_pf=N
+	Nf_pf=20000
 	df_pf = (fmax_pf - fmin_pf) / Nf_pf	
 	f_pf = 2.0*np.pi*np.linspace(fmin_pf, fmax_pf, Nf_pf)
 	
-	#We take the L-S of the signal.
+	#We take the L-S of the signal
 	if hole_index == 1:
-		#we add the masks of the holes and the transits and the eclipse.
-		mask_tot = new_signal_avrg.mask + to_mask_transit
+		mask_tot = data[:,0].mask + to_mask_transit
 		mask_tot[mask_tot == 2] = 1	
-		new_signal_avrg=np.ma.array(new_signal_avrg,mask=mask_tot)	
-		pgram_pf = LombScargleFast().fit(new_t[~new_signal_avrg.mask], new_signal_avrg[~new_signal_avrg.mask],sdev)		
+		data[:,0] = np.ma.array(data[:,0], mask = mask_tot)
+		t_eff = data[:,0][~data[:,0].mask]
+		signal_eff = data[:,1][~data[:,0].mask]
+		pgram_pf = LombScargleFast().fit(t_eff, signal_eff,sdev)		
 	elif hole_index == 0:
-		new_signal_avrg=np.ma.array(new_signal_avrg,mask=to_mask_transit)
-		pgram_pf = LombScargleFast().fit(new_t[~new_signal_avrg.mask], new_signal_avrg[~new_signal_avrg.mask],sdev)
-	power_pf = pgram_pf.score_frequency_grid(fmin_pf,df_pf,Nf_pf)
+		data = np.ma.array(data, mask = to_mask_transit)
+		t_eff = data[:,0][~data[:,0].mask]
+		signal_eff = data[:,1][~data[:,0].mask]
+		pgram_pf = LombScargleFast().fit(t_eff, signal_eff,sdev)	
+	
+	power_pf = pgram_pf.score_frequency_grid(fmin_pf,df_pf,Nf_pf)		
+	
+	#We plot the relevant graphs
+	bins = np.linspace(0,1./f_real,1000)
+	digitized = np.digitize(t_eff,bins)
+	bin_means_t = [t_eff[digitized == i].mean() for i in range(1, len(bins))]
+	bin_means_sign = [signal_eff[digitized == i].mean() for i in range(1, len(bins))]
 	ax6 = fig.add_subplot(4, 2, 6)	
 	ax6.set_xlim([0,1./f_real])
-	ax6.plot(new_t[~new_signal_avrg.mask],new_signal_avrg[~new_signal_avrg.mask], linewidth = 5)
-	for i in range(len(new_signal)):
-		ax6.plot(new_t[~new_signal_avrg.mask],new_signal[i][~new_signal_avrg.mask], 'o', ms = 1)                      
+	ax6.plot(bin_means_t,bin_means_sign)                    
 	ax6.set_xlabel('Time (days)')
 	ax6.set_ylabel('Global phase-folded signal')
 	ax6.grid()
 	ax6.get_yaxis().get_major_formatter().set_useOffset(False)
 	
-	#We want the frequency in Hz and we normalise.
+	#We want the frequency in Hz
+	print len(f_pf),len(power_pf)
 	ax7 = fig.add_subplot(4, 2, 8)	
 	ax7.set_xlim([fmin_pf/2.0/np.pi/f_real,6])	
 	ax7.plot(f_pf/2.0/np.pi/f_real, power_pf, 'o')
@@ -335,5 +304,6 @@ elif Method == 2:  #If Method is 2, we do both.
 	plt.show()
 else:
 	print "Invalid Method value. Must be 1 if the user doesn't want to phase fold, 0 if he wants to or 2 for both."
+
 
 	
