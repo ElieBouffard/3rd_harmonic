@@ -58,7 +58,7 @@ print N
 
 #**************Transits and eclipses parameters***********************
 #The function is only used if we phase-fold. 
-def transit(new_t,periods): 
+def transit(new_t): 
 	indexes = []
 	one_period_N = len(new_t)
 	t0 =  real_period*np.random.rand()/2.				#The beginning of the transit. Must be in the first half of the planet's period
@@ -67,7 +67,7 @@ def transit(new_t,periods):
 	index_half_period_later = (np.abs(new_t- t0 - real_period/2.)).argmin()
 	half_period_pts = index_half_period_later - index_it0 
 	transit_pts = index_transit_end - index_it0
-	for i in range(2*periods):                                              #We create a list of the indexes of the time falling the transit and the eclipse
+	for i in range(2):                                              #We create a list of the indexes of the time falling the transit and the eclipse
 		indexes = indexes + (np.asarray(range(transit_pts))+ index_it0 + i*half_period_pts).tolist()
 	to_mask_transit = np.zeros(one_period_N)                        #used in order to mask the data points in the transit and eclipse
 	indexes = np.asarray(indexes)		
@@ -88,7 +88,7 @@ if hole_index == 1:
 	for i in range(hole_number):
 		indexi = (np.abs(t-hole_pos[i])).argmin()                  #find its index
 		temp = temp + (np.asarray(range(num_pts[i]))+indexi).tolist()#add the indexes of all the points in the hole in a list
-	to_mask[temp] = 1                                                    #all the hole points are to be masked
+	to_mask[temp[temp < N]] = 1                                                    #all the hole points are to be masked
 if hole_index != 0 and hole_index != 1:                                      #failsafe
 	sys.exit("hole_index must be either 0 (no holes considered) or 1 (holes considered).")
 #------------------------------------------------------------------------
@@ -100,7 +100,7 @@ if Method == 0:                                #If method is 0, we don't phase f
 		signal=np.ma.array(signal,mask=to_mask)
 	#We choose the frequency range we want to check. An angular frequency is required
 	#for the L-S diagram.	
-	fmin=0.1*min(f_real,N_freq)
+	fmin=0.1*f_real
 	fmax=10.*f_real
 	Nf=N
 	df = (fmax - fmin) / Nf		
@@ -147,7 +147,7 @@ elif Method == 1:     #If Method is 1, we phase fold.
 	
 	#We choose the frequency range we want to check. An angular frequency is required
 	#for the L-S diagram.
-	fmin_pf=0.1*min(f_real,N_freq)
+	fmin_pf=0.1*f_real
 	fmax_pf=10.*f_real
 	Nf_pf=N
 	df_pf = (fmax_pf - fmin_pf) / Nf_pf	
@@ -192,7 +192,7 @@ elif Method == 2:  #If Method is 2, we do both.
 		N_ran=np.ma.array(N_ran,mask=to_mask)	
 	#We choose the frequency range we want to check. An angular frequency is required
 	#for the L-S diagram.	
-	fmin=0.1*min(f_real,N_freq)
+	fmin=0.1*f_real
 	fmax=10.*f_real
 	Nf=20000
 	df = (fmax - fmin) / Nf	
@@ -250,18 +250,17 @@ elif Method == 2:  #If Method is 2, we do both.
 	ax5.get_yaxis().get_major_formatter().set_useOffset(False)
 
 	#***************************Phase-folding part**************************
-	periods = 2.
-	t = np.ma.mod(t,periods*real_period)
+	t = np.ma.mod(t,real_period)
 	data = np.ma.column_stack((t,signal))
 	data = data[np.lexsort((data[:,1],data[:,0]))]	
-	to_mask_transit = transit(data[:,0],int(periods))
+	to_mask_transit = transit(data[:,0])
 	#We choose the frequency range we want to check. An angular frequency is required
 	#for the L-S diagram.
-	fmin_pf=0.1*min(f_real,N_freq)
+	fmin_pf=0.1*f_real
 	fmax_pf=10.*f_real
-	Nf_pf=20000
+	Nf_pf=1000
 	df_pf = (fmax_pf - fmin_pf) / Nf_pf	
-	f_pf = 2.0*np.pi*np.linspace(fmin_pf, fmax_pf, Nf_pf)
+	f_pf = np.linspace(fmin_pf, fmax_pf, Nf_pf)
 	
 	#We take the L-S of the signal
 	if hole_index == 1:
@@ -270,7 +269,18 @@ elif Method == 2:  #If Method is 2, we do both.
 		data[:,0] = np.ma.array(data[:,0], mask = mask_tot)
 		t_eff = data[:,0][~data[:,0].mask]
 		signal_eff = data[:,1][~data[:,0].mask]
-		pgram_pf = LombScargleFast().fit(t_eff, signal_eff,sdev)		
+		print t_eff, signal_eff
+		bins = np.linspace(0.,real_period,5000)
+		digitized = np.digitize(t_eff,bins)
+		bin_means_t = []
+		bin_means_sign = []
+		for i in range(1, len(bins)):
+			bin_means_t.append(t_eff[digitized == i].mean())
+			bin_means_sign.append(signal_eff[digitized == i].mean()) 
+			print i
+		bin_means_t = np.ma.asarray(bin_means_t)
+		bin_means_sign = np.ma.asarray(bin_means_sign)
+		pgram_pf = LombScargleFast().fit(bin_means_t[~bin_means_t.mask], bin_means_sign[~bin_means_sign.mask],sdev)		
 	elif hole_index == 0:
 		data = np.ma.array(data, mask = to_mask_transit)
 		t_eff = data[:,0][~data[:,0].mask]
@@ -280,17 +290,9 @@ elif Method == 2:  #If Method is 2, we do both.
 	power_pf = pgram_pf.score_frequency_grid(fmin_pf,df_pf,Nf_pf)		
 	
 	#We plot the relevant graphs
-	bins = np.linspace(0,periods*real_period,1000)
-	digitized = np.digitize(t_eff,bins)
-	bin_means_t = []
-	bin_means_sign = []
-	for i in range(1, len(bins)):
-		bin_means_t.append(t_eff[digitized == i].mean())
-		bin_means_sign.append(signal_eff[digitized == i].mean())
-	bin_means_t = np.asarray(bin_means_t) 
-	bin_means_sign = np.asarray(bin_means_sign)
+	
 	ax6 = fig.add_subplot(4, 2, 6)	
-	ax6.set_xlim([0,periods*real_period])
+	ax6.set_xlim([0,1./f_real])
 	ax6.plot(bin_means_t,bin_means_sign)                    
 	ax6.set_xlabel('Time (days)')
 	ax6.set_ylabel('Global phase-folded signal')
@@ -298,10 +300,10 @@ elif Method == 2:  #If Method is 2, we do both.
 	ax6.get_yaxis().get_major_formatter().set_useOffset(False)
 	
 	#We want the frequency in Hz
-	print len(f_pf),len(power_pf)
+	print f_pf,power_pf
 	ax7 = fig.add_subplot(4, 2, 8)	
 	ax7.set_xlim([fmin_pf/2.0/np.pi/f_real,6])	
-	ax7.plot(f_pf/2.0/np.pi/f_real, power_pf, 'o')
+	ax7.plot(f_pf/f_real, power_pf, 'o')
 	ax7.set_xlabel('Freq (1/orbital period)')
 	ax7.set_ylabel('Power of the phase-folded signal')
 	ax7.grid()
@@ -310,3 +312,5 @@ elif Method == 2:  #If Method is 2, we do both.
 else:
 	print "Invalid Method value. Must be 1 if the user doesn't want to phase fold, 0 if he wants to or 2 for both."
 
+
+	
